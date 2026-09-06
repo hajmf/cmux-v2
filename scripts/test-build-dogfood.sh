@@ -1004,8 +1004,8 @@ startup_window_prefix="$(sed -n \
 # Content comparison plus fresh destination mtimes prevents Ninja from reusing
 # those ABI-incompatible objects.
 sync_script="$root/scripts/sync.sh"
-grep -Fq 'rsync -az --ignore-times --no-times --delete' "$sync_script"
-grep -Fq 'rsync -az --ignore-times --no-times overlay/' "$sync_script"
+grep -Fq 'rsync -az --chmod=Du+w,Fu+w --ignore-times --no-times --delete' "$sync_script"
+grep -Fq 'rsync -az --chmod=Du+w,Fu+w --ignore-times --no-times overlay/' "$sync_script"
 grep -Fq 'patches/ "$HOST:$SRC/.cmux-patches/"' "$sync_script"
 
 python3 -B "$root/scripts/test-benchmark-cmux-browser-scaling.py"
