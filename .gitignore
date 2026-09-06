@@ -1,0 +1,37 @@
+# Local build outputs (deployed app bundles) — never commit these.
+/dist/
+/dist-basic/
+/dist-rework/
+/dist-uidemo/
+/dist-*/
+/builds/
+# Retained output from the low-noise HQ build monitor.
+/.cmux-build-logs/
+# Scratch handoff notes.
+/HANDOFF.md
+# Generated / compiled tooling artifacts.
+/tools/cmux-key
+/tools/ax-window-lab/build/
+/xcuitest/
+*.xcodeproj/
+/.release-keys/
+
+# Private workstation integration and external storage.
+/AGENTS.md
+/CLAUDE.md
+/.agents/
+/.codex/
+/build/
+/build
+/toolchains/
+/toolchains
+/artifacts/
+/artifacts
+/release/
+/release
+/source/
+/local-*.sh
+/smoke-test-local-build.sh
+/verify-local-release.sh
+__pycache__/
+*.pyc

@@ -1,21 +1,3 @@
-Copyright (c) 2024-present Manaflow, Inc.
-
-Other contributors and third parties retain copyright in their material.
-
-Except where a file or accompanying notice states otherwise, material
-contributed under the cmux project license is licensed under the GNU General
-Public License v3.0 or later (GPL-3.0-or-later). See the full text below.
-
-Manaflow may separately offer commercial terms only for material for which it
-controls the necessary rights. Those terms do not relicense third-party
-material or outside contributions for which Manaflow lacks a separate grant.
-A product that combines cmux material with third-party material remains subject
-to every applicable third-party license and notice. See
-THIRD_PARTY_NOTICES.md and file-level notices. Contact founders@manaflow.com
-for details about the eligible scope.
-
---------------------------------------------------------------------------------
-
                     GNU GENERAL PUBLIC LICENSE
                        Version 3, 29 June 2007
 
@@ -649,8 +631,7 @@ to attach them to the start of each source file to most effectively
 state the exclusion of warranty; and each file should have at least
 the "copyright" line and a pointer to where the full notice is found.
 
-    <one line to give the program's name and a brief idea of what it does.>
-    Copyright (C) <year>  <name of author>
+    Copyright (C) 2025 The Helium Authors
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
