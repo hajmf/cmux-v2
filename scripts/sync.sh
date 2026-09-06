@@ -12,6 +12,8 @@ set -euo pipefail
 HOST="${CMUX_BUILDER:-ec2-user@aws-m4pro-1}"
 SRC="${CHROMIUM_SRC:-/Volumes/recpass123/cmux-ci/cmux-browser-benchmark/src}"
 cd "$(dirname "$0")/.."
+# Source snapshots may be read-only. Keep mirrored files and directories
+# writable because apply.sh and Git restore modify this disposable checkout.
 # Always transfer cmux-owned inputs, even when their bytes match the previous
 # workspace. APFS-cloned Ninja outputs can otherwise be newer than an
 # identical source file left behind by a prior branch, so a header's current
@@ -78,8 +80,8 @@ ssh -o BatchMode=yes "$HOST" "cd '$SRC' && set -e
 ssh -o BatchMode=yes "$HOST" "cd '$SRC' && python3 -B - ." \
   < "$CMUX_SCRIPTS_DIR/restore-custom-window-permissions.py"
 
-rsync -az --ignore-times --no-times --delete overlay/chrome/browser/cmux_term/ "$HOST:$SRC/chrome/browser/cmux_term/"
-rsync -az --ignore-times --no-times overlay/ "$HOST:$SRC/"
-rsync -az --ignore-times --no-times --delete patches/ "$HOST:$SRC/.cmux-patches/"
-rsync -az --ignore-times --no-times third_party/helium/ "$HOST:$SRC/third_party/helium/"
+rsync -az --chmod=Du+w,Fu+w --ignore-times --no-times --delete overlay/chrome/browser/cmux_term/ "$HOST:$SRC/chrome/browser/cmux_term/"
+rsync -az --chmod=Du+w,Fu+w --ignore-times --no-times overlay/ "$HOST:$SRC/"
+rsync -az --chmod=Du+w,Fu+w --ignore-times --no-times --delete patches/ "$HOST:$SRC/.cmux-patches/"
+rsync -az --chmod=Du+w,Fu+w --ignore-times --no-times third_party/helium/ "$HOST:$SRC/third_party/helium/"
 echo "synced overlay/ -> $HOST:$SRC/ (cmux_term with --delete)"
