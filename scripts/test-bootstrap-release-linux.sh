@@ -62,7 +62,11 @@ grep -Fq 'collect-ghostty-licenses.py' \
 grep -Fq '#include "base/memory/raw_ptr.h"' "$OPENGL_HOST"
 grep -Fq 'reinterpret_cast<void*>(' "$OPENGL_HOST"
 grep -Fq 'EGL_DEFAULT_DISPLAY)' "$OPENGL_HOST"
-grep -Fq 'raw_ptr<void> lib_gl_ = nullptr;' "$OPENGL_HOST"
+grep -Fq 'raw_ptr<void, DisableDanglingPtrDetection> lib_gl_ = nullptr;' \
+  "$OPENGL_HOST"
+grep -Fq 'class SharedEglDisplay final' "$OPENGL_HOST"
+grep -Fq 'display_ = GetSharedEglDisplay().Acquire();' "$OPENGL_HOST"
+grep -Fq 'GetSharedEglDisplay().Release(display_);' "$OPENGL_HOST"
 python3 "$ROOT/scripts/test-apply-ghostty-link.py"
 
 RESET_REPO="$RESET_TEST_ROOT/chromium"

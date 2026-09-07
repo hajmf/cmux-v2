@@ -5,12 +5,15 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cstddef>
 #include <limits>
 #include <utility>
 
 #include "base/check.h"
 #include "base/logging.h"
 #include "base/memory/raw_ptr.h"
+#include "base/no_destructor.h"
+#include "base/synchronization/lock.h"
 
 #if BUILDFLAG(IS_LINUX)
 #include <dlfcn.h>
@@ -46,6 +49,70 @@ uint32_t ClampDimension(uint32_t value) {
 
 #if BUILDFLAG(IS_LINUX)
 
+// EGLDisplay is process-wide state: repeated eglInitialize() calls return the
+// same handle, and eglTerminate() invalidates every context on that display.
+// Keep it initialized until the last cmux terminal host releases it.
+class SharedEglDisplay final {
+ public:
+  SharedEglDisplay() = default;
+  ~SharedEglDisplay() = default;
+
+  EGLDisplay Acquire() {
+    base::AutoLock lock(lock_);
+    if (display_ != EGL_NO_DISPLAY) {
+      ++users_;
+      return display_;
+    }
+
+    EGLDisplay candidate = EGL_NO_DISPLAY;
+#if defined(EGL_PLATFORM_SURFACELESS_MESA)
+    auto get_platform_display =
+        reinterpret_cast<PFNEGLGETPLATFORMDISPLAYEXTPROC>(
+            eglGetProcAddress("eglGetPlatformDisplayEXT"));
+    if (get_platform_display) {
+      candidate = get_platform_display(
+          EGL_PLATFORM_SURFACELESS_MESA,
+          reinterpret_cast<void*>(EGL_DEFAULT_DISPLAY), nullptr);
+      if (candidate != EGL_NO_DISPLAY &&
+          eglInitialize(candidate, nullptr, nullptr) != EGL_TRUE) {
+        candidate = EGL_NO_DISPLAY;
+      }
+    }
+#endif
+    if (candidate == EGL_NO_DISPLAY) {
+      candidate = eglGetDisplay(EGL_DEFAULT_DISPLAY);
+      if (candidate == EGL_NO_DISPLAY ||
+          eglInitialize(candidate, nullptr, nullptr) != EGL_TRUE) {
+        return EGL_NO_DISPLAY;
+      }
+    }
+
+    display_ = candidate;
+    users_ = 1;
+    return display_;
+  }
+
+  void Release(EGLDisplay display) {
+    base::AutoLock lock(lock_);
+    CHECK_EQ(display_, display);
+    CHECK_GT(users_, 0u);
+    if (--users_ == 0) {
+      eglTerminate(display_);
+      display_ = EGL_NO_DISPLAY;
+    }
+  }
+
+ private:
+  base::Lock lock_;
+  EGLDisplay display_ = EGL_NO_DISPLAY;
+  size_t users_ = 0;
+};
+
+SharedEglDisplay& GetSharedEglDisplay() {
+  static base::NoDestructor<SharedEglDisplay> display;
+  return *display;
+}
+
 class LinuxOpenGLHost final : public CmuxGhosttyOpenGLHost {
  public:
   LinuxOpenGLHost(uint32_t width,
@@ -64,7 +131,7 @@ class LinuxOpenGLHost final : public CmuxGhosttyOpenGLHost {
       if (surface_ != EGL_NO_SURFACE) {
         eglDestroySurface(display_, surface_);
       }
-      eglTerminate(display_);
+      GetSharedEglDisplay().Release(display_);
     }
     if (lib_gl_) {
       dlclose(lib_gl_);
@@ -74,31 +141,10 @@ class LinuxOpenGLHost final : public CmuxGhosttyOpenGLHost {
   bool Initialize() {
     lib_gl_ = dlopen("libGL.so.1", RTLD_LAZY | RTLD_LOCAL);
 
-    // Prefer Mesa's display-independent surfaceless platform. Fall back to the
-    // default EGL display for proprietary drivers without the extension.
-#if defined(EGL_PLATFORM_SURFACELESS_MESA)
-    auto get_platform_display =
-        reinterpret_cast<PFNEGLGETPLATFORMDISPLAYEXTPROC>(
-            eglGetProcAddress("eglGetPlatformDisplayEXT"));
-    if (get_platform_display) {
-      display_ = get_platform_display(EGL_PLATFORM_SURFACELESS_MESA,
-                                      reinterpret_cast<void*>(
-                                          EGL_DEFAULT_DISPLAY),
-                                      nullptr);
-      if (display_ != EGL_NO_DISPLAY &&
-          eglInitialize(display_, nullptr, nullptr) != EGL_TRUE) {
-        display_ = EGL_NO_DISPLAY;
-      }
-    }
-#endif
+    display_ = GetSharedEglDisplay().Acquire();
     if (display_ == EGL_NO_DISPLAY) {
-      display_ = eglGetDisplay(EGL_DEFAULT_DISPLAY);
-      if (display_ == EGL_NO_DISPLAY ||
-          eglInitialize(display_, nullptr, nullptr) != EGL_TRUE) {
-        LOG(ERROR) << "cmux-term: unable to initialize an EGL display";
-        display_ = EGL_NO_DISPLAY;
-        return false;
-      }
+      LOG(ERROR) << "cmux-term: unable to initialize an EGL display";
+      return false;
     }
     if (eglBindAPI(EGL_OPENGL_API) != EGL_TRUE) {
       LOG(ERROR) << "cmux-term: EGL cannot bind the desktop OpenGL API";
