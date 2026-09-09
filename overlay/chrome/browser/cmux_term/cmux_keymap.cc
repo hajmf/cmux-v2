@@ -285,6 +285,210 @@ std::string FormatConfigChord(const KeyChord& chord) {
   return out;
 }
 
+std::string SerializeKeyRule(const KeyRule& rule, std::string_view indent) {
+  std::string out(indent);
+  out += "{\"key\": \"";
+  const std::vector<KeyChord> fallback{rule.chord};
+  const std::vector<KeyChord>& sequence =
+      rule.sequence.empty() ? fallback : rule.sequence;
+  std::string formatted_sequence;
+  for (const KeyChord& chord : sequence) {
+    if (!formatted_sequence.empty()) {
+      formatted_sequence += " ";
+    }
+    formatted_sequence += FormatConfigChord(chord);
+  }
+  out += EscapeJson(formatted_sequence);
+  out += "\", \"command\": \"";
+  out += EscapeJson(rule.command);
+  out += "\"";
+  if (!rule.when_text.empty()) {
+    out += ", \"when\": \"";
+    out += EscapeJson(rule.when_text);
+    out += "\"";
+  }
+  if (!rule.args_json.empty()) {
+    out += ", \"args\": ";
+    out += rule.args_json;
+  }
+  out += "}";
+  return out;
+}
+
+void SkipJsoncTrivia(std::string_view text, size_t* pos) {
+  while (*pos < text.size()) {
+    if (IsSpace(text[*pos])) {
+      ++*pos;
+      continue;
+    }
+    if (text.substr(*pos, 2) == "//") {
+      *pos = text.find('\n', *pos + 2);
+      if (*pos == std::string_view::npos) {
+        *pos = text.size();
+      }
+      continue;
+    }
+    if (text.substr(*pos, 2) == "/*") {
+      const size_t end = text.find("*/", *pos + 2);
+      *pos = end == std::string_view::npos ? text.size() : end + 2;
+      continue;
+    }
+    break;
+  }
+}
+
+bool SkipJsoncString(std::string_view text, size_t* pos) {
+  if (*pos >= text.size() || text[*pos] != '"') {
+    return false;
+  }
+  ++*pos;
+  while (*pos < text.size()) {
+    const char c = text[(*pos)++];
+    if (c == '"') {
+      return true;
+    }
+    if (c == '\\' && *pos < text.size()) {
+      ++*pos;
+    }
+  }
+  return false;
+}
+
+bool SkipJsoncValue(std::string_view text, size_t* pos) {
+  SkipJsoncTrivia(text, pos);
+  if (*pos >= text.size()) {
+    return false;
+  }
+  if (text[*pos] == '"') {
+    return SkipJsoncString(text, pos);
+  }
+  if (text[*pos] == '{' || text[*pos] == '[') {
+    std::vector<char> closes;
+    closes.push_back(text[*pos] == '{' ? '}' : ']');
+    ++*pos;
+    while (*pos < text.size()) {
+      SkipJsoncTrivia(text, pos);
+      if (*pos >= text.size()) {
+        return false;
+      }
+      if (text[*pos] == '"') {
+        if (!SkipJsoncString(text, pos)) {
+          return false;
+        }
+        continue;
+      }
+      if (text[*pos] == '{' || text[*pos] == '[') {
+        closes.push_back(text[*pos] == '{' ? '}' : ']');
+        ++*pos;
+        continue;
+      }
+      if (text[*pos] == closes.back()) {
+        ++*pos;
+        closes.pop_back();
+        if (closes.empty()) {
+          return true;
+        }
+        continue;
+      }
+      ++*pos;
+    }
+    return false;
+  }
+  while (*pos < text.size() && text[*pos] != ',' && text[*pos] != '}' &&
+         text[*pos] != ']') {
+    ++*pos;
+  }
+  return true;
+}
+
+struct TopLevelKeybindingsSpan {
+  size_t root_open = std::string_view::npos;
+  size_t root_close = std::string_view::npos;
+  size_t array_open = std::string_view::npos;
+  size_t array_close = std::string_view::npos;
+};
+
+bool FindTopLevelKeybindings(std::string_view text,
+                             TopLevelKeybindingsSpan* span) {
+  size_t pos = 0;
+  SkipJsoncTrivia(text, &pos);
+  if (pos >= text.size() || text[pos] != '{') {
+    return false;
+  }
+  span->root_open = pos++;
+  while (pos < text.size()) {
+    SkipJsoncTrivia(text, &pos);
+    if (pos < text.size() && text[pos] == '}') {
+      span->root_close = pos;
+      return true;
+    }
+    const size_t key_open = pos;
+    if (!SkipJsoncString(text, &pos)) {
+      return false;
+    }
+    const std::string_view raw_key =
+        text.substr(key_open + 1, pos - key_open - 2);
+    SkipJsoncTrivia(text, &pos);
+    if (pos >= text.size() || text[pos++] != ':') {
+      return false;
+    }
+    SkipJsoncTrivia(text, &pos);
+    if (raw_key == "keybindings") {
+      if (pos >= text.size() || text[pos] != '[') {
+        return false;
+      }
+      span->array_open = pos;
+      if (!SkipJsoncValue(text, &pos)) {
+        return false;
+      }
+      span->array_close = pos - 1;
+    } else if (!SkipJsoncValue(text, &pos)) {
+      return false;
+    }
+    SkipJsoncTrivia(text, &pos);
+    if (pos < text.size() && text[pos] == ',') {
+      ++pos;
+      continue;
+    }
+    if (pos < text.size() && text[pos] == '}') {
+      span->root_close = pos;
+      return true;
+    }
+    return false;
+  }
+  return false;
+}
+
+std::optional<char> LastJsoncToken(std::string_view text,
+                                   size_t begin,
+                                   size_t end) {
+  std::optional<char> last;
+  size_t pos = begin;
+  while (pos < end) {
+    const size_t before_trivia = pos;
+    SkipJsoncTrivia(text, &pos);
+    if (pos >= end) {
+      break;
+    }
+    if (pos != before_trivia) {
+      continue;
+    }
+    if (text[pos] == '"') {
+      const size_t string_begin = pos;
+      if (!SkipJsoncString(text, &pos) || pos > end) {
+        return std::nullopt;
+      }
+      last = text[pos - 1];
+      if (pos == string_begin) {
+        return std::nullopt;
+      }
+      continue;
+    }
+    last = text[pos++];
+  }
+  return last;
+}
+
 class WhenParser {
  public:
   explicit WhenParser(std::string_view text,
@@ -1516,6 +1720,8 @@ std::vector<KeyRule> DefaultKeymapRules(bool is_mac,
   AddDefault(&rules, WithModifier(tab_modifier, "shift+["), "tab.prev");
   AddDefault(&rules, WithModifier(tab_modifier, "shift+]"), "tab.next");
   AddDefault(&rules, "alt+n", "workspace.new");
+  AddDefault(&rules, "shift+/", "settings.shortcuts",
+             "!terminalFocused && !omniboxFocused");
 
   // Ctrl+Tab is a platform convention on all desktops. In particular, never
   // synthesize Cmd+Tab on macOS: the OS owns it for application switching.
@@ -1598,36 +1804,71 @@ std::string SerializeKeymapConfig(ShortcutModifierScheme scheme,
   for (size_t i = 0; i < rules.size(); ++i) {
     const KeyRule& rule = rules[i];
     out += i == 0 ? "\n" : ",\n";
-    out += "    {\"key\": \"";
-    const std::vector<KeyChord> fallback{rule.chord};
-    const std::vector<KeyChord>& sequence =
-        rule.sequence.empty() ? fallback : rule.sequence;
-    std::string formatted_sequence;
-    for (const KeyChord& chord : sequence) {
-      if (!formatted_sequence.empty()) {
-        formatted_sequence += " ";
-      }
-      formatted_sequence += FormatConfigChord(chord);
-    }
-    out += EscapeJson(formatted_sequence);
-    out += "\", \"command\": \"";
-    out += EscapeJson(rule.command);
-    out += "\"";
-    if (!rule.when_text.empty()) {
-      out += ", \"when\": \"";
-      out += EscapeJson(rule.when_text);
-      out += "\"";
-    }
-    if (!rule.args_json.empty()) {
-      out += ", \"args\": ";
-      out += rule.args_json;
-    }
-    out += "}";
+    out += SerializeKeyRule(rule, "    ");
   }
   if (!rules.empty()) {
     out += "\n  ";
   }
   out += "]\n}\n";
+  return out;
+}
+
+std::optional<std::string> AppendKeybindingRuleToConfig(
+    std::string_view jsonc,
+    ShortcutModifierScheme scheme,
+    const KeyRule& rule,
+    std::string* error) {
+  const std::string trimmed = Trim(jsonc);
+  if (trimmed.empty()) {
+    return SerializeKeymapConfig(scheme, {rule});
+  }
+  KeymapLoadResult parsed = ParseKeymapJson(jsonc);
+  if (!parsed.valid) {
+    SetError(error, "cmux.json is not valid JSONC");
+    return std::nullopt;
+  }
+  TopLevelKeybindingsSpan span;
+  if (!FindTopLevelKeybindings(jsonc, &span) ||
+      span.root_close == std::string_view::npos) {
+    SetError(error, "could not locate the top-level cmux configuration");
+    return std::nullopt;
+  }
+
+  std::string out(jsonc);
+  const std::string serialized = SerializeKeyRule(rule, "    ");
+  if (span.array_close != std::string_view::npos) {
+    const std::optional<char> last = LastJsoncToken(
+        jsonc, span.array_open + 1, span.array_close);
+    const bool empty = !last.has_value();
+    const bool trailing_comma = last == ',';
+    std::string insertion;
+    if (!empty && !trailing_comma) {
+      insertion += ',';
+    }
+    insertion += "\n";
+    insertion += serialized;
+    insertion += "\n  ";
+    out.insert(span.array_close, insertion);
+  } else {
+    size_t content_end = span.root_close;
+    while (content_end > span.root_open + 1 && IsSpace(jsonc[content_end - 1])) {
+      --content_end;
+    }
+    const bool empty = content_end == span.root_open + 1;
+    std::string insertion;
+    if (!empty && jsonc[content_end - 1] != ',') {
+      insertion += ',';
+    }
+    insertion += "\n  \"keybindings\": [\n";
+    insertion += serialized;
+    insertion += "\n  ]\n";
+    out.insert(span.root_close, insertion);
+  }
+  KeymapLoadResult check = ParseKeymapJson(out);
+  if (!check.valid) {
+    SetError(error, "the edited cmux.json did not pass validation");
+    return std::nullopt;
+  }
   return out;
 }
 

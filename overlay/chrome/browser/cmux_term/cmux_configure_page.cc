@@ -13,6 +13,7 @@
 
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
+#include "base/files/important_file_writer.h"
 #include "base/functional/bind.h"
 #include "base/memory/ref_counted_memory.h"
 #include "base/memory/weak_ptr.h"
@@ -240,15 +241,34 @@ constexpr char kIndexHtml[] = R"HTML(<!doctype html>
           placeholder="Search key, command, or when clause">
         <div class="shortcut-actions">
           <span id="shortcut-count" class="muted"></span>
+          <button id="add-shortcut" class="file-button" type="button">Add shortcut</button>
           <button id="open-config" class="file-button" type="button">Open cmux.json</button>
         </div>
       </div>
+      <form id="shortcut-editor" class="shortcut-editor" hidden>
+        <div class="editor-heading">
+          <div><p class="eyebrow">PREFERENCE</p><h3 id="editor-title">Add shortcut</h3></div>
+          <button id="cancel-shortcut" class="file-button" type="button">Cancel</button>
+        </div>
+        <p id="editor-help" class="muted">The saved rule is appended to cmux.json and becomes the active preference.</p>
+        <div class="editor-fields">
+          <label>Key<input id="editor-key" required placeholder="cmd+k cmd+r" autocomplete="off"></label>
+          <label>Command<input id="editor-command" required placeholder="keymap.reload" autocomplete="off"></label>
+          <label class="editor-when">When (optional)<input id="editor-when" placeholder="!terminalFocused" autocomplete="off"></label>
+        </div>
+        <p id="editor-preview" class="editor-preview" aria-live="polite"></p>
+        <div class="editor-actions">
+          <span id="editor-status" class="inline-status" role="status" aria-live="polite"></span>
+          <button id="save-shortcut" class="choice primary compact" type="submit">Save preference</button>
+        </div>
+      </form>
       <div class="shortcut-table" role="table" aria-label="Active shortcuts">
         <div class="shortcut-row shortcut-header" role="row">
           <span role="columnheader">Key</span>
           <span role="columnheader">Command</span>
           <span role="columnheader">When</span>
           <span role="columnheader">Source</span>
+          <span role="columnheader">Edit</span>
         </div>
         <div id="shortcut-rows"></div>
       </div>
@@ -390,7 +410,7 @@ legend { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-pat
 #shortcut-search { min-width: 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px;
   color: var(--text); background: var(--bg); font: inherit; }
 .shortcut-table { margin-top: 12px; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
-.shortcut-row { display: grid; grid-template-columns: minmax(130px, .9fr) minmax(170px, 1.25fr) minmax(150px, 1.2fr) 70px;
+.shortcut-row { display: grid; grid-template-columns: minmax(120px, .85fr) minmax(160px, 1.2fr) minmax(140px, 1.1fr) 70px 52px;
   gap: 12px; align-items: center; padding: 10px 12px; border-top: 1px solid var(--line); }
 .shortcut-row:first-child { border-top: 0; }
 .shortcut-header { color: var(--muted); background: color-mix(in srgb, var(--muted) 8%, transparent);
@@ -400,6 +420,21 @@ legend { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-pat
 .shortcut-source.overlap { color: light-dark(#a05b00, #f3b55d); }
 .shortcut-empty { padding: 22px 12px; color: var(--muted); text-align: center; }
 .shortcut-actions { display: flex; gap: 10px; align-items: center; }
+.shortcut-editor { margin-top: 18px; padding: 18px; border: 1px solid var(--accent);
+  border-radius: 14px; background: color-mix(in srgb, var(--accent) 5%, var(--panel)); }
+.editor-heading, .editor-actions { display: flex; justify-content: space-between; gap: 16px; align-items: center; }
+.editor-heading h3 { margin: 0; font-size: 18px; }
+.editor-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 16px; }
+.editor-fields label { display: grid; gap: 6px; font-size: 12px; font-weight: 650; }
+.editor-fields input { min-width: 0; padding: 10px 12px; border: 1px solid var(--line);
+  border-radius: 10px; color: var(--text); background: var(--bg); font: 13px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.editor-when { grid-column: 1 / -1; }
+.editor-preview { margin: 12px 0 0; padding: 10px 12px; border-radius: 10px;
+  color: var(--muted); background: color-mix(in srgb, var(--muted) 8%, transparent);
+  font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
+.editor-actions { margin-top: 14px; }
+.choice.compact { min-height: 0; padding: 10px 14px; border-radius: 10px; white-space: nowrap; }
+.edit-shortcut { padding: 6px 8px; }
 .file-button { padding: 8px 10px; border: 1px solid var(--line); border-radius: 9px;
   color: var(--text); background: var(--panel); cursor: pointer; white-space: nowrap; }
 .file-button:hover { border-color: var(--accent); }
@@ -419,7 +454,7 @@ legend { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-pat
   .icon-mode-card input { top: 9px; left: 9px; }
   .section-heading { align-items: flex-start; }
   .shortcut-table { overflow-x: auto; }
-  .shortcut-row { min-width: 650px; }
+  .shortcut-row { min-width: 720px; }
 }
 @media (prefers-reduced-motion: no-preference) {
   .choice { transition: border-color 120ms ease, transform 120ms ease; }
@@ -433,6 +468,16 @@ const search = document.querySelector('#shortcut-search');
 const shortcutRows = document.querySelector('#shortcut-rows');
 const shortcutCount = document.querySelector('#shortcut-count');
 const openConfig = document.querySelector('#open-config');
+const addShortcut = document.querySelector('#add-shortcut');
+const shortcutEditor = document.querySelector('#shortcut-editor');
+const editorTitle = document.querySelector('#editor-title');
+const editorHelp = document.querySelector('#editor-help');
+const editorKey = document.querySelector('#editor-key');
+const editorCommand = document.querySelector('#editor-command');
+const editorWhen = document.querySelector('#editor-when');
+const editorPreview = document.querySelector('#editor-preview');
+const editorStatus = document.querySelector('#editor-status');
+const saveShortcut = document.querySelector('#save-shortcut');
 const iconFieldset = document.querySelector('#icon-mode-fieldset');
 const iconStatus = document.querySelector('#icon-status');
 const themePicker = document.querySelector('#ghostty-theme');
@@ -448,6 +493,7 @@ const settingsPanels = [...document.querySelectorAll('.settings-panel')];
 let bindings = [];
 let customizationLoaded = false;
 let customizationSaveGeneration = 0;
+let editingBinding = null;
 
 function showPanel(panelId) {
   for (const panel of settingsPanels) panel.hidden = panel.id !== panelId;
@@ -617,12 +663,82 @@ function renderBindings() {
       : binding.source;
     source.classList.toggle('overlap', Boolean(binding.overlapsLater));
     row.append(source);
+    const edit = document.createElement('button');
+    edit.className = 'file-button edit-shortcut';
+    edit.type = 'button';
+    edit.textContent = 'Edit';
+    edit.setAttribute('aria-label', `Edit ${binding.key} ${binding.command}`);
+    edit.addEventListener('click', () => showShortcutEditor(binding));
+    row.append(edit);
     shortcutRows.append(row);
   }
 }
 
+function setEditorStatus(message, kind = '') {
+  editorStatus.textContent = message;
+  editorStatus.className = `inline-status ${kind}`;
+}
+
+function renderShortcutPreview() {
+  const key = editorKey.value.trim() || '(key)';
+  const command = editorCommand.value.trim() || '(command)';
+  const when = editorWhen.value.trim();
+  editorPreview.textContent =
+    `Preference to save: ${key} → ${command}${when ? ` when ${when}` : ' always'}`;
+}
+
+function showShortcutEditor(binding = null) {
+  editingBinding = binding;
+  shortcutEditor.hidden = false;
+  editorTitle.textContent = binding ? 'Edit shortcut' : 'Add shortcut';
+  editorKey.value = binding?.key || '';
+  editorCommand.value = binding?.command || '';
+  editorWhen.value = binding?.when || '';
+  editorHelp.textContent = binding
+    ? `Currently ${binding.key} runs ${binding.command} (${binding.source}). Saving appends an override preference to cmux.json.`
+    : 'The saved rule is appended to cmux.json and becomes the active preference.';
+  renderShortcutPreview();
+  setEditorStatus('');
+  editorKey.focus();
+  shortcutEditor.scrollIntoView({block: 'nearest'});
+}
+
+function hideShortcutEditor() {
+  shortcutEditor.hidden = true;
+  editingBinding = null;
+  setEditorStatus('');
+}
+
 search.addEventListener('input', renderBindings);
+for (const field of [editorKey, editorCommand, editorWhen]) {
+  field.addEventListener('input', renderShortcutPreview);
+}
 openConfig.addEventListener('click', () => chrome.send('openConfiguration'));
+addShortcut.addEventListener('click', () => showShortcutEditor());
+document.querySelector('#cancel-shortcut').addEventListener('click', hideShortcutEditor);
+shortcutEditor.addEventListener('submit', async event => {
+  event.preventDefault();
+  saveShortcut.disabled = true;
+  setEditorStatus('Validating and saving…');
+  try {
+    const state = await sendWithPromise('saveKeybinding', {
+      key: editorKey.value.trim(),
+      command: editorCommand.value.trim(),
+      when: editorWhen.value.trim(),
+      oldKey: editingBinding?.key || '',
+      oldCommand: editingBinding?.command || '',
+      oldWhen: editingBinding?.when || '',
+    });
+    if (!state.ok) throw new Error(state.error || 'Could not save shortcut');
+    hideShortcutEditor();
+    applyConfiguration(state);
+    setStatus('Shortcut preference saved to cmux.json.', 'success');
+  } catch (error) {
+    setEditorStatus(error.message || String(error), 'error');
+  } finally {
+    saveShortcut.disabled = false;
+  }
+});
 settingsTabs.forEach(tab => tab.addEventListener('click', () => {
   showPanel(tab.dataset.panel);
 }));
@@ -741,9 +857,7 @@ loadCustomization().catch(error => {
   themeCount.textContent = 'Unavailable';
 });
 
-try {
-  const state = await sendWithPromise('getConfiguration');
-  if (!state.ok) throw new Error(state.error || 'Could not load settings');
+function applyConfiguration(state) {
   const radio = document.querySelector(`input[value="${state.scheme}"]`);
   if (radio) radio.checked = true;
   bindings = state.bindings || [];
@@ -756,6 +870,12 @@ try {
   });
   openConfig.disabled = !state.fileFound;
   renderBindings();
+}
+
+try {
+  const state = await sendWithPromise('getConfiguration');
+  if (!state.ok) throw new Error(state.error || 'Could not load settings');
+  applyConfiguration(state);
   setStatus(state.fileFound
     ? `Loaded ${state.bindingCount} custom shortcut rule(s) from cmux.json.`
     : 'Using built-in shortcuts; create cmux.json to customize them.');
@@ -874,6 +994,101 @@ ConfigResult LoadConfigurationOnWorker() {
   result.user_rules = keymap.rules;
   result.ok = true;
   return result;
+}
+
+std::optional<KeyRule> BuildEditedKeyRule(std::string_view key,
+                                          std::string_view command,
+                                          std::string_view when,
+                                          std::string* error) {
+  if (key.empty() || command.empty() || key.size() > 256 ||
+      command.size() > 512 || when.size() > 1024) {
+    if (error) {
+      *error = "Key and command are required and must be reasonably sized.";
+    }
+    return std::nullopt;
+  }
+  std::optional<std::vector<KeyChord>> sequence = ParseKeySequence(key, error);
+  if (!sequence || sequence->empty()) {
+    return std::nullopt;
+  }
+  KeyRule rule;
+  rule.sequence = *sequence;
+  rule.chord = rule.sequence.front();
+  rule.command = std::string(command);
+  rule.when_text = std::string(when);
+  if (!when.empty()) {
+    std::optional<WhenExpression> expression = ParseWhen(when, error);
+    if (!expression) {
+      return std::nullopt;
+    }
+    rule.when = *expression;
+  }
+  return rule;
+}
+
+ConfigResult SaveKeybindingOnWorker(std::string key,
+                                    std::string command,
+                                    std::string when,
+                                    std::string old_key,
+                                    std::string old_command,
+                                    std::string old_when) {
+  ConfigResult failure;
+  std::string error;
+  std::optional<KeyRule> rule =
+      BuildEditedKeyRule(key, command, when, &error);
+  if (!rule) {
+    failure.error = error.empty() ? "The shortcut rule is invalid." : error;
+    return failure;
+  }
+
+  const base::FilePath path =
+      base::FilePath::FromUTF8Unsafe(CmuxConfigPath());
+  std::string original;
+  const ConfigReadStatus read = ReadConfigFile(path, &original);
+  if (read == ConfigReadStatus::kError) {
+    failure.error = "cmux.json could not be read safely; it was not changed.";
+    return failure;
+  }
+  ShortcutModifierScheme scheme = kDefaultShortcutModifierScheme;
+  if (read == ConfigReadStatus::kRead) {
+    KeymapLoadResult parsed = ParseKeymapJson(original);
+    if (!parsed.valid) {
+      failure.error =
+          "cmux.json is not valid JSONC; fix it before saving shortcuts.";
+      return failure;
+    }
+    scheme = parsed.modifier_scheme.value_or(kDefaultShortcutModifierScheme);
+  }
+
+  std::string updated = original;
+  const bool changed_existing =
+      !old_key.empty() && !old_command.empty() &&
+      (old_key != key || old_command != command || old_when != when);
+  if (changed_existing) {
+    std::optional<KeyRule> removal = BuildEditedKeyRule(
+        old_key, "-" + old_command, old_when, &error);
+    std::optional<std::string> with_removal =
+        removal ? AppendKeybindingRuleToConfig(updated, scheme, *removal, &error)
+                : std::nullopt;
+    if (!with_removal) {
+      failure.error = error.empty() ? "Could not replace the old shortcut."
+                                    : error;
+      return failure;
+    }
+    updated = std::move(*with_removal);
+  }
+  std::optional<std::string> with_rule =
+      AppendKeybindingRuleToConfig(updated, scheme, *rule, &error);
+  if (!with_rule) {
+    failure.error = error.empty() ? "Could not update cmux.json." : error;
+    return failure;
+  }
+  if (!base::CreateDirectory(path.DirName()) ||
+      !base::ImportantFileWriter::WriteFileAtomically(path, *with_rule)) {
+    failure.error = "cmux.json could not be written atomically.";
+    return failure;
+  }
+  return LoadConfigurationOnWorker();
 }
 
 base::DictValue ResultToValue(const ConfigResult& result) {
@@ -996,6 +1211,10 @@ class CmuxConfigureHandler : public content::WebUIMessageHandler {
     web_ui()->RegisterMessageCallback(
         "getConfiguration",
         base::BindRepeating(&CmuxConfigureHandler::HandleGetConfiguration,
+                            base::Unretained(this)));
+    web_ui()->RegisterMessageCallback(
+        "saveKeybinding",
+        base::BindRepeating(&CmuxConfigureHandler::HandleSaveKeybinding,
                             base::Unretained(this)));
     web_ui()->RegisterMessageCallback(
         "openConfiguration",
@@ -1219,6 +1438,29 @@ class CmuxConfigureHandler : public content::WebUIMessageHandler {
     AllowJavascript();
     ConfigTaskRunner()->PostTaskAndReplyWithResult(
         FROM_HERE, base::BindOnce(&LoadConfigurationOnWorker),
+        base::BindOnce(&CmuxConfigureHandler::Reply,
+                       weak_factory_.GetWeakPtr(), args[0].Clone()));
+  }
+
+  void HandleSaveKeybinding(const base::ListValue& args) {
+    if (args.size() != 2 || !args[0].is_string() || !args[1].is_dict()) {
+      return;
+    }
+    const base::DictValue& input = args[1].GetDict();
+    const std::string* key = input.FindString("key");
+    const std::string* command = input.FindString("command");
+    const std::string* when = input.FindString("when");
+    const std::string* old_key = input.FindString("oldKey");
+    const std::string* old_command = input.FindString("oldCommand");
+    const std::string* old_when = input.FindString("oldWhen");
+    if (!key || !command || !when || !old_key || !old_command || !old_when) {
+      return;
+    }
+    AllowJavascript();
+    ConfigTaskRunner()->PostTaskAndReplyWithResult(
+        FROM_HERE,
+        base::BindOnce(&SaveKeybindingOnWorker, *key, *command, *when,
+                       *old_key, *old_command, *old_when),
         base::BindOnce(&CmuxConfigureHandler::Reply,
                        weak_factory_.GetWeakPtr(), args[0].Clone()));
   }

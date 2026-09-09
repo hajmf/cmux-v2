@@ -186,6 +186,21 @@ void TestResolve() {
       keymap.Resolve(MustParseChord("ctrl+tab"), context, /*is_mac=*/true);
   Check(command && *command == "tab.next", "ctrl-tab is real ctrl on mac");
 
+  command =
+      keymap.Resolve(MustParseChord("shift+/"), context, /*is_mac=*/true);
+  Check(command && *command == "settings.shortcuts",
+        "question mark opens the shortcut viewer");
+  context.terminal_focused = true;
+  Check(!keymap.Resolve(MustParseChord("shift+/"), context,
+                        /*is_mac=*/true),
+        "question mark remains terminal input while a terminal is focused");
+  context.terminal_focused = false;
+  context.omnibox_focused = true;
+  Check(!keymap.Resolve(MustParseChord("shift+/"), context,
+                        /*is_mac=*/true),
+        "question mark remains text while the omnibox is focused");
+  context.omnibox_focused = false;
+
   context.terminal_focused = true;
   Check(ShouldRouteUnmodifiedTabToTerminal(MustParseChord("tab"), context),
         "plain tab routes to the focused terminal for shell completion");
@@ -513,6 +528,50 @@ void TestJson() {
         "serialization preserves when clause");
   Check(result.rules[0].args_json.find("title") != std::string::npos,
         "serialization preserves args");
+
+  KeyRule appended_rule;
+  appended_rule.chord = MustParseChord("shift+/");
+  appended_rule.sequence = {appended_rule.chord};
+  appended_rule.command = "settings.shortcuts";
+  appended_rule.when_text = "!textInputFocus";
+  appended_rule.when = MustParseWhen(appended_rule.when_text);
+  std::string append_error;
+  std::optional<std::string> appended = AppendKeybindingRuleToConfig(
+      "{// keep me\n\"browser\":{\"newTabPage\":\"blank\"},\n"
+      "\"keybindings\":[{\"key\":\"mod+t\","
+      "\"command\":\"tab.newWeb\"},],\n}",
+      kDefaultShortcutModifierScheme, appended_rule, &append_error);
+  Check(appended.has_value(), "rule appends to an existing JSONC array");
+  Check(appended && appended->find("// keep me") != std::string::npos &&
+            appended->find("newTabPage") != std::string::npos,
+        "rule append preserves comments and unrelated fields");
+  result = ParseKeymapJson(appended.value_or(std::string()));
+  Check(result.valid && result.rules.size() == 2 &&
+            result.rules.back().command == "settings.shortcuts",
+        "appended rule parses and remains last-match-wins");
+
+  appended = AppendKeybindingRuleToConfig(
+      "{\n  \"app\": {\"sendAnonymousTelemetry\": false}\n}\n",
+      kDefaultShortcutModifierScheme, appended_rule, &append_error);
+  Check(appended && appended->find("\"keybindings\"") != std::string::npos,
+        "rule append creates a missing top-level keybindings array");
+  result = ParseKeymapJson(appended.value_or(std::string()));
+  Check(result.valid && result.rules.size() == 1,
+        "new keybindings array parses");
+
+  appended = AppendKeybindingRuleToConfig(
+      "{\"keybindings\":[/* keep empty-array note */\n]}\n",
+      kDefaultShortcutModifierScheme, appended_rule, &append_error);
+  result = ParseKeymapJson(appended.value_or(std::string()));
+  Check(appended && result.valid && result.rules.size() == 1 &&
+            appended->find("keep empty-array note") != std::string::npos,
+        "rule append handles and preserves a comment-only empty array");
+
+  appended = AppendKeybindingRuleToConfig(
+      "", kDefaultShortcutModifierScheme, appended_rule, &append_error);
+  result = ParseKeymapJson(appended.value_or(std::string()));
+  Check(appended && result.valid && result.rules.size() == 1,
+        "blank config initializes with the selected scheme and rule");
 
   const std::string path = "/tmp/cmux_config_test.json";
   {

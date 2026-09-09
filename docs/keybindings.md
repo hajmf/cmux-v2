@@ -124,6 +124,7 @@ Unknown flags evaluate to false.
 - `workspace.jump1` through `workspace.jump9`
 - `keymap.reload` (unbound by default)
 - `theme.reload` (unbound by default)
+- `settings.shortcuts`
 - `window.new`
 - `window.close`
 - `window.toggleFullscreen`
@@ -213,6 +214,9 @@ edge. Dividers between split panes are draggable in both directions.
 
 ## Defaults
 
+For the complete platform-by-platform list, including generated tab and
+workspace number bindings, see [Default shortcut keys](default-shortcuts.md).
+
 Shared defaults:
 
 | Key | Command | When |
@@ -241,6 +245,7 @@ Shared defaults:
 | `ctrl+tab` | `tab.next` | |
 | `ctrl+shift+tab` | `tab.prev` | |
 | `alt+n` | `workspace.new` | |
+| `shift+/` | `settings.shortcuts` | `!terminalFocused && !omniboxFocused` |
 | `escape` | `omnibox.escape` | `omniboxFocused || dragActive` |
 
 The configurable tab rows above use Command or Control according to

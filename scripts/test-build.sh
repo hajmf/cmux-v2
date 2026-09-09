@@ -158,6 +158,7 @@ python3 "$root/scripts/test-m151-command-updater-compat.py"
 python3 "$root/scripts/test-custom-window-permissions.py"
 python3 "$root/scripts/test-macos-product-identity.py"
 python3 "$root/scripts/test-cmux-startup-mode.py"
+python3 "$root/scripts/test-shortcut-settings.py"
 bash "$root/scripts/test-build-dogfood.sh"
 
 echo "build tests passed"

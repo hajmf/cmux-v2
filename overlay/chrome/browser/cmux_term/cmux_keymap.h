@@ -221,6 +221,14 @@ Keymap DefaultKeymap(bool is_mac, ShortcutModifierScheme scheme);
 KeymapLoadResult ParseKeymapJson(std::string_view json);
 std::string SerializeKeymapConfig(ShortcutModifierScheme scheme,
                                   const std::vector<KeyRule>& rules);
+// Appends one validated user rule to the top-level `keybindings` array while
+// preserving comments, formatting, and unrelated configuration fields. A
+// missing/blank config is initialized with the selected modifier scheme.
+std::optional<std::string> AppendKeybindingRuleToConfig(
+    std::string_view jsonc,
+    ShortcutModifierScheme scheme,
+    const KeyRule& rule,
+    std::string* error = nullptr);
 // Applies the selected default scheme first, then appends individual user
 // rules so existing last-match-wins customization remains intact.
 Keymap KeymapFromConfig(bool is_mac, const KeymapLoadResult& config);

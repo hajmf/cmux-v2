@@ -24,7 +24,7 @@ CMUX_TUI_STAGE="${CMUX_TUI_STAGE:-$BUILD_ROOT/cmux-tui-stage/$CMUX_TUI_REVISION}
 # discard an otherwise successful multi-hour Chromium compile.
 case "$CHANNEL" in stable|nightly) ;; *) echo "invalid channel: $CHANNEL" >&2; exit 2 ;; esac
 case "$PHASE" in
-  all|compile|package) ;;
+  all|compile|incremental-compile|package|incremental-package) ;;
   *) echo "invalid Linux release phase: $PHASE" >&2; exit 2 ;;
 esac
 [ -d "$SRC/.git" ] || { echo "warm Chromium checkout missing: $SRC" >&2; exit 2; }
@@ -99,7 +99,24 @@ verify_compiled_release() {
   fi
 }
 
+preflight_incremental_chrome() {
+  : "${CMUX_INCREMENTAL_BASELINE_VERIFIED:?incremental baseline was not verified}"
+  python3 "$ROOT/scripts/run-exact-incremental-link.py" \
+    --out "$SRC/out/Release" --log-dir "$OUT"
+}
+
 deb="$SRC/out/Release/cmux-browser-stable_${VERSION}-1_amd64.deb"
+stage_incremental_debian_baseline() {
+  local baseline
+  baseline="${CMUX_INCREMENTAL_BASELINE_RELEASE:?incremental baseline release is required}"
+  test -s "$baseline/cmux-linux-x64.deb" || {
+    echo "incremental baseline Debian package is missing: $baseline" >&2
+    exit 1
+  }
+  cp --reflink=auto --preserve=mode,timestamps \
+    "$baseline/cmux-linux-x64.deb" "$deb"
+}
+
 build_debian_package() {
   local build_timestamp installer_version sysroot
   sysroot="$SRC/build/linux/debian_bullseye_amd64-sysroot"
@@ -161,14 +178,26 @@ case "$PHASE" in
     echo "Linux release compile cache ready: $VERSION"
     exit 0
     ;;
-  package)
+  incremental-compile)
+    assert_build_config
+    preflight_incremental_chrome
+    verify_compiled_release
+    printf '%s\n' "$COMPILE_KEY" > "$COMPILE_RECEIPT"
+    echo "Linux incremental release compile cache ready: $VERSION"
+    exit 0
+    ;;
+  package|incremental-package)
     [ "$(cat "$COMPILE_RECEIPT" 2>/dev/null || true)" = "$COMPILE_KEY" ] || {
       echo "Linux release compile receipt is missing or stale" >&2
       exit 1
     }
     assert_build_config
     verify_compiled_release
-    build_debian_package
+    if [ "$PHASE" = incremental-package ]; then
+      stage_incremental_debian_baseline
+    else
+      build_debian_package
+    fi
     ;;
   all)
     configure_release_tree
@@ -182,6 +211,9 @@ esac
 work="$(mktemp -d "${TMPDIR:-/tmp}/cmux-linux-release.XXXXXX")"
 trap 'rm -rf "$work"' EXIT
 dpkg-deb --raw-extract "$deb" "$work/extracted"
+if [ "$PHASE" = incremental-package ]; then
+  chmod -R u+w "$work/extracted"
+fi
 test -s "$work/extracted/DEBIAN/control" || {
   echo "packaged Debian control metadata was not extracted" >&2
   exit 1

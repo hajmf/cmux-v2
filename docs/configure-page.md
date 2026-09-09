@@ -21,8 +21,15 @@ pages.
   It updates every open terminal and browser pane immediately and is
   automatically suppressed in fullscreen. Turning it off removes the frame's
   inset/padding as well as its corner mask and outline.
-- Searchable, read-only inspection of built-in and custom shortcuts, including
-  exact key/condition overlaps and an **Open cmux.json** action.
+- Searchable inspection of built-in and custom shortcuts, including exact
+  key/condition overlaps and an **Open cmux.json** action.
+- Add and edit controls append validated, last-rule-wins preferences to the
+  existing `keybindings` array while preserving comments, formatting, and
+  unrelated settings. Editing a key also appends the matching removal rule so
+  the old binding no longer remains active.
+- Pressing `?` outside the terminal and omnibox opens a new web tab directly
+  on the Keyboard section, where the current value and pending edit are shown
+  together before saving.
 - Reads run on a sequenced `MayBlock` task runner, never the UI thread.
 - Malformed, unreadable, or oversized (over 1 MiB) files are reported and are
   never overwritten.
@@ -32,9 +39,10 @@ pages.
   bridge; it permits no inline script or network content.
 
 The shortcut source of truth is `~/.config/cmux/cmux.json` (or an absolute
-`CMUX_CONFIG`),
-not Web Storage. The page never rewrites that JSONC document, so comments and
-unrelated settings remain untouched; external edits reload automatically in
+`CMUX_CONFIG`), not Web Storage. Shortcut edits update only the top-level
+`keybindings` array and use an atomic file replacement, so comments and
+unrelated settings remain untouched; malformed, unreadable, and oversized
+files are rejected without a write. External edits reload automatically in
 every cmux window. App-icon mode is stored in the macOS application defaults;
 the rounded-frame option is stored in the Chromium profile. Reload the
 settings page itself to refresh its shortcut inspector snapshot.
@@ -47,6 +55,7 @@ steps**. They still need cmux-native status/results in this page, especially a
 per-source import report and partial-failure UI. Sidebar/layout, appearance,
 downloads, privacy, and startup behavior still have additional settings to be
 bridged. Individual
-binding editing intentionally remains an external JSONC workflow.
+Advanced editing, including command arguments, remains available directly in
+the JSONC file.
 
 The app menu navigates its cmux configuration item to `cmux://settings`.

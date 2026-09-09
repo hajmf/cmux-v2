@@ -492,6 +492,7 @@ enum class CommandAction {
   kWorkspaceJump9,
   kKeymapReload,
   kThemeReload,
+  kSettingsShortcuts,
   kWindowNew,
   kWindowClose,
   kWindowToggleFullscreen,
@@ -561,6 +562,7 @@ constexpr CommandSpec kCommandSpecs[] = {
     {"workspace.jump9", CommandAction::kWorkspaceJump9, false},
     {"keymap.reload", CommandAction::kKeymapReload, false},
     {"theme.reload", CommandAction::kThemeReload, false},
+    {"settings.shortcuts", CommandAction::kSettingsShortcuts, false},
     {"window.new", CommandAction::kWindowNew, false},
     {"window.close", CommandAction::kWindowClose, false},
     {"window.toggleFullscreen", CommandAction::kWindowToggleFullscreen, false},
@@ -887,6 +889,7 @@ bool IsReservedCommandAction(CommandAction action) {
     case CommandAction::kWorkspaceJump7:
     case CommandAction::kWorkspaceJump8:
     case CommandAction::kWorkspaceJump9:
+    case CommandAction::kSettingsShortcuts:
     case CommandAction::kWindowClose:
       return true;
     default:
@@ -5387,6 +5390,13 @@ class CmuxWindowView : public views::View,
         }
         RecordWebTabPlacement(web_contents, workspace, view->pane_id(), tab);
         SyncBrowserTabOrder(workspace);
+      } else if (url.is_valid() && !url.is_empty()) {
+        // model_.AddTab() can synchronously associate a default blank
+        // WebContents before this presentation is realized. Honor an explicit
+        // initial URL for that existing tab as well as for a newly created one.
+        web_contents->GetController().LoadURL(
+            url, content::Referrer(), ui::PAGE_TRANSITION_TYPED,
+            std::string());
       }
       surface = AddBrowserSurface(view->surface_container(), web_contents,
                                   view->pane_id());
@@ -5396,31 +5406,50 @@ class CmuxWindowView : public views::View,
     }
   }
 
-  void NewTabInPane(PaneId pane_id,
-                    SurfaceKind kind,
-                    std::string terminal_command = std::string(),
-                    std::string title = std::string()) {
+  SurfaceTabId NewTabInPane(PaneId pane_id,
+                            SurfaceKind kind,
+                            std::string terminal_command = std::string(),
+                            std::string title = std::string(),
+                            GURL initial_url = GURL()) {
     CmuxPaneView* view = ViewForPane(pane_id);
     if (!view) {
-      return;
+      return kInvalidId;
     }
     const SurfaceTabId tab = model_.AddTab(ws_, pane_id, kind, title);
     if (tab == kInvalidId) {
-      return;
+      return kInvalidId;
     }
-    CreateSurfaceForTab(view, tab, kind, GURL(), terminal_command);
+    CreateSurfaceForTab(view, tab, kind, initial_url, terminal_command);
     RefreshPaneTabs(pane_id);
     if (kind == SurfaceKind::kWeb) {
       FocusNewWebTab(pane_id, tab);
     } else {
       focus_.FocusPane(pane_id, /*move_keyboard=*/true);
     }
+    return tab;
   }
 
   void CloseTabDeferred(PaneId pane, SurfaceTabId tab) {
     base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
         FROM_HERE, base::BindOnce(&CmuxWindowView::CloseTabNow,
                                   weak_factory_.GetWeakPtr(), pane, tab));
+  }
+
+  void NavigateWebTabDeferred(SurfaceTabId tab, GURL url) {
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+        FROM_HERE,
+        base::BindOnce(&CmuxWindowView::NavigateWebTabNow,
+                       weak_factory_.GetWeakPtr(), tab, std::move(url)));
+  }
+
+  void NavigateWebTabNow(SurfaceTabId tab, const GURL& url) {
+    content::WebContents* contents = WebContentsForSurface(tab);
+    if (!contents || !url.is_valid() || url.is_empty()) {
+      return;
+    }
+    contents->GetController().LoadURL(url, content::Referrer(),
+                                      ui::PAGE_TRANSITION_TYPED,
+                                      std::string());
   }
 
   void CloseOtherTabsDeferred(PaneId pane, SurfaceTabId keep) {
@@ -6948,6 +6977,17 @@ class CmuxWindowView : public views::View,
       case CommandAction::kThemeReload:
         ReloadTheme();
         return true;
+      case CommandAction::kSettingsShortcuts: {
+        const GURL settings_url(
+            "chrome://cmux-configure/?section=details");
+        const SurfaceTabId tab =
+            NewTabInPane(FocusedPane(), SurfaceKind::kWeb, std::string(),
+                         std::string(), settings_url);
+        if (tab != kInvalidId) {
+          NavigateWebTabDeferred(tab, settings_url);
+        }
+        return true;
+      }
       case CommandAction::kWindowNew:
         ShowNewViewsWebWindow();
         return true;
